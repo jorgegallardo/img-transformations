@@ -78,19 +78,11 @@
         font-size: 0.95rem;
       }
 
-      .img-wrapper {
+      .panel img {
         position: absolute;
-        inset: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-
-      .img-wrapper img {
         max-width: 100%;
         max-height: 100%;
         object-fit: contain;
-        display: block;
       }
 
       .face-overlay {
@@ -98,20 +90,8 @@
         inset: 0;
         width: 100%;
         height: 100%;
-      }
-
-      .face-overlay .dot {
-        cursor: grab;
-        transition: r 0.1s ease;
-      }
-
-      .face-overlay .dot:hover {
-        r: 1.6;
-      }
-
-      .face-overlay .dot-hit {
-        fill: transparent;
-        cursor: grab;
+        pointer-events: none;
+        z-index: 2;
       }
 
       .image-select {
@@ -119,6 +99,7 @@
         gap: 10px;
         justify-content: center;
         margin-bottom: 28px;
+        flex-wrap: wrap;
       }
 
       .image-select button {
@@ -250,30 +231,24 @@
           <span class="placeholder" id="source-placeholder"
             >Choose an image below</span
           >
-          <div class="img-wrapper" id="source-wrapper" style="display: none">
-            <img id="source-img" src="" alt="Source face" />
-            <svg
-              class="face-overlay"
-              id="source-overlay"
-              viewBox="0 0 100 100"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <g id="src-grid"></g>
-              <g id="src-dots"></g>
-            </svg>
-          </div>
+          <img id="source-img" src="" alt="Source face" style="display: none" />
+          <svg
+            class="face-overlay"
+            id="source-overlay"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="xMidYMid meet"
+            style="display: none"
+          ></svg>
         </div>
         <div class="panel">
           <span class="panel-label">Reference</span>
-          <div class="img-wrapper">
-            <img id="ref-img" src="images/reference.png" alt="Reference face" />
-            <svg
-              class="face-overlay"
-              id="ref-overlay"
-              viewBox="0 0 100 100"
-              preserveAspectRatio="xMidYMid meet"
-            ></svg>
-          </div>
+          <img id="ref-img" src="images/reference.png" alt="Reference face" />
+          <svg
+            class="face-overlay"
+            id="ref-overlay"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="xMidYMid meet"
+          ></svg>
         </div>
       </div>
 
@@ -282,6 +257,9 @@
         <button data-src="images/angled.png">Angled</button>
         <button data-src="images/profile.png">Profile</button>
         <button data-src="images/under.png">Under</button>
+        <button data-src="images/small.png">Small</button>
+        <button data-src="images/corner.png">Corner</button>
+        <button data-src="images/side.png">Side</button>
       </div>
 
       <div class="sliders">
@@ -315,7 +293,7 @@
             type="range"
             id="dilation"
             min="0.2"
-            max="3"
+            max="5"
             step="0.05"
             value="1"
           />
@@ -326,8 +304,8 @@
           <input
             type="range"
             id="translate-x"
-            min="-200"
-            max="200"
+            min="-250"
+            max="250"
             step="1"
             value="0"
           />
@@ -338,8 +316,8 @@
           <input
             type="range"
             id="translate-y"
-            min="-200"
-            max="200"
+            min="-450"
+            max="450"
             step="1"
             value="0"
           />
@@ -351,13 +329,9 @@
     </div>
 
     <script>
-      /* ── DOM refs ── */
       const sourceImg = document.getElementById('source-img');
-      const sourceWrapper = document.getElementById('source-wrapper');
       const placeholder = document.getElementById('source-placeholder');
-      const srcGridEl = document.getElementById('src-grid');
-      const srcDotsEl = document.getElementById('src-dots');
-      const srcSvg = document.getElementById('source-overlay');
+      const srcOverlay = document.getElementById('source-overlay');
       const refOverlay = document.getElementById('ref-overlay');
       const buttons = document.querySelectorAll('#image-select button');
 
@@ -377,9 +351,8 @@
       };
 
       /* ── Reference landmarks (the target positions) ──
-         Tweak these to reposition dots on the reference face.
-         Coordinate space: 0-100 for both x and y.
-         (0,0) = top-left of panel, (100,100) = bottom-right. */
+     Coordinate space: 0-100 for both x and y.
+     (0,0) = top-left of panel, (100,100) = bottom-right. */
       const LEFT_EYE_X = 43;
       const LEFT_EYE_Y = 39;
       const RIGHT_EYE_X = 57;
@@ -400,19 +373,15 @@
       };
 
       /* ── Bounding box shape ──
-         All values are multiples of the eye distance (currently 16 units).
-         BOX_WIDTH:  half-width to each side of eye midpoint (1.4 × 16 = 22.4 units each side)
-         BOX_TOP:    how far above the eye-line the box extends (1.15 × 16 = 18.4 units)
-         BOX_BOTTOM: how far below the eye-line the box extends (1.55 × 16 = 24.8 units)
-         GRID_COLS:  number of square grid cells across the width */
+     All values are multiples of the eye distance.
+     BOX_WIDTH:  half-width to each side of eye midpoint
+     BOX_TOP:    how far above the eye-line the box extends
+     BOX_BOTTOM: how far below the eye-line the box extends
+     GRID_COLS:  number of square grid cells across the width */
       const BOX_WIDTH = 1.05;
       const BOX_TOP = 1.15;
       const BOX_BOTTOM = 1.65;
       const GRID_COLS = 10;
-
-      /* ── Mutable state ── */
-      let dots = {}; // current dot positions (SVG-internal, independent of sliders)
-      let dragging = null; // key of the dot being dragged
 
       /* ── Helpers ── */
       function dist(a, b) {
@@ -422,43 +391,10 @@
         return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
       }
 
-      function svgPoint(evt) {
-        const pt = srcSvg.createSVGPoint();
-        const touch = evt.touches ? evt.touches[0] : evt;
-        pt.x = touch.clientX;
-        pt.y = touch.clientY;
-        return pt.matrixTransform(srcSvg.getScreenCTM().inverse());
-      }
-
-      function transformPoint(p, refL, refR, curL, curR) {
-        const refM = mid(refL, refR);
-        const curM = mid(curL, curR);
-        const refD = dist(refL, refR) || 1;
-        const curD = dist(curL, curR) || 1;
-        const s = curD / refD;
-
-        const rux = (refR[0] - refL[0]) / refD,
-          ruy = (refR[1] - refL[1]) / refD;
-        const rvx = -ruy,
-          rvy = rux;
-        const cux = (curR[0] - curL[0]) / curD,
-          cuy = (curR[1] - curL[1]) / curD;
-        const cvx = -cuy,
-          cvy = cux;
-
-        const dx = p[0] - refM[0],
-          dy = p[1] - refM[1];
-        const u = dx * rux + dy * ruy;
-        const v = dx * rvx + dy * rvy;
-
-        return [
-          curM[0] + (u * cux + v * cvx) * s,
-          curM[1] + (u * cuy + v * cvy) * s,
-        ];
-      }
-
-      /* ── Build grid + axes SVG for given eye positions ── */
-      function buildGrid(leftEye, rightEye) {
+      /* ── Build overlay SVG (grid + box + axes + dots) ── */
+      function buildOverlay() {
+        const leftEye = refLandmarks.leftEye,
+          rightEye = refLandmarks.rightEye;
         const m = mid(leftEye, rightEye);
         const d = dist(leftEye, rightEye) || 1;
         const ux = (rightEye[0] - leftEye[0]) / d;
@@ -469,35 +405,31 @@
         const hw = d * BOX_WIDTH;
         const ht = d * BOX_TOP;
         const hb = d * BOX_BOTTOM;
-
         const cellSize = (2 * hw) / GRID_COLS;
         const gridRows = Math.round((ht + hb) / cellSize);
 
         let svg = '';
 
-        // Vertical lines (along v, spaced along u)
         for (let i = 0; i <= GRID_COLS; i++) {
           const tu = -hw + i * cellSize;
           svg += `<line x1="${m[0] + tu * ux - ht * vx}" y1="${m[1] + tu * uy - ht * vy}"
-                        x2="${m[0] + tu * ux + hb * vx}" y2="${m[1] + tu * uy + hb * vy}"
-                        stroke="#999" stroke-width="0.22" stroke-opacity="0.45"/>`;
+                    x2="${m[0] + tu * ux + hb * vx}" y2="${m[1] + tu * uy + hb * vy}"
+                    stroke="#999" stroke-width="0.22" stroke-opacity="0.45"/>`;
         }
-        // Horizontal lines (along u, spaced along v)
         for (let j = 0; j <= gridRows; j++) {
           const tv = -ht + j * cellSize;
           svg += `<line x1="${m[0] - hw * ux + tv * vx}" y1="${m[1] - hw * uy + tv * vy}"
-                        x2="${m[0] + hw * ux + tv * vx}" y2="${m[1] + hw * uy + tv * vy}"
-                        stroke="#999" stroke-width="0.22" stroke-opacity="0.45"/>`;
+                    x2="${m[0] + hw * ux + tv * vx}" y2="${m[1] + hw * uy + tv * vy}"
+                    stroke="#999" stroke-width="0.22" stroke-opacity="0.45"/>`;
         }
 
-        // Axes through eye midpoint
         const ext = 2.5;
         svg += `<line x1="${m[0] - (hw + ext) * ux}" y1="${m[1] - (hw + ext) * uy}"
-                      x2="${m[0] + (hw + ext) * ux}" y2="${m[1] + (hw + ext) * uy}"
-                      stroke="#555" stroke-width="0.45"/>`;
+                  x2="${m[0] + (hw + ext) * ux}" y2="${m[1] + (hw + ext) * uy}"
+                  stroke="#555" stroke-width="0.45"/>`;
         svg += `<line x1="${m[0] - (ht + ext) * vx}" y1="${m[1] - (ht + ext) * vy}"
-                      x2="${m[0] + (hb + ext) * vx}" y2="${m[1] + (hb + ext) * vy}"
-                      stroke="#555" stroke-width="0.45"/>`;
+                  x2="${m[0] + (hb + ext) * vx}" y2="${m[1] + (hb + ext) * vy}"
+                  stroke="#555" stroke-width="0.45"/>`;
 
         const a = 1.3;
         function arrow(px, py, dx, dy) {
@@ -510,73 +442,33 @@
         svg += arrow(m[0] - (ht + ext) * vx, m[1] - (ht + ext) * vy, -vx, -vy);
         svg += arrow(m[0] + (hb + ext) * vx, m[1] + (hb + ext) * vy, vx, vy);
 
-        // Bounding box
         const tl = [m[0] - hw * ux - ht * vx, m[1] - hw * uy - ht * vy];
         const tr = [m[0] + hw * ux - ht * vx, m[1] + hw * uy - ht * vy];
         const br = [m[0] + hw * ux + hb * vx, m[1] + hw * uy + hb * vy];
         const bl = [m[0] - hw * ux + hb * vx, m[1] - hw * uy + hb * vy];
         svg += `<polygon points="${tl} ${tr} ${br} ${bl}" fill="none" stroke="#4CAF50" stroke-width="0.9"/>`;
 
-        return svg;
-      }
-
-      /* ── Build dots SVG (source — draggable) ── */
-      function buildSrcDots() {
-        const dotData = [
-          { key: 'leftEye', color: '#4CAF50' },
-          { key: 'rightEye', color: '#4CAF50' },
-          { key: 'nose', color: '#FFD600' },
-          { key: 'leftLip', color: '#F44336' },
-          { key: 'rightLip', color: '#F44336' },
-        ];
-        let svg = '';
-        for (const d of dotData) {
-          const [cx, cy] = dots[d.key];
-          svg += `<circle class="dot-hit" data-dot="${d.key}" cx="${cx}" cy="${cy}" r="5"/>`;
-          svg += `<circle class="dot" data-dot="${d.key}" cx="${cx}" cy="${cy}" r="1.25"
-                fill="${d.color}" stroke="#fff" stroke-width="0.4" pointer-events="none"/>`;
-        }
-        return svg;
-      }
-
-      /* ── Build static overlay for reference panel ── */
-      function buildRefOverlay() {
-        let svg = buildGrid(refLandmarks.leftEye, refLandmarks.rightEye);
         const r = 1.25;
-        const pts = [
+        const dots = [
           { p: refLandmarks.leftEye, c: '#4CAF50' },
           { p: refLandmarks.rightEye, c: '#4CAF50' },
           { p: refLandmarks.nose, c: '#FFD600' },
           { p: refLandmarks.leftLip, c: '#F44336' },
           { p: refLandmarks.rightLip, c: '#F44336' },
         ];
-        for (const { p, c } of pts) {
+        for (const { p, c } of dots) {
           svg += `<circle cx="${p[0]}" cy="${p[1]}" r="${r}" fill="${c}" stroke="#fff" stroke-width="0.4"/>`;
         }
+
         return svg;
       }
 
-      refOverlay.innerHTML = buildRefOverlay();
+      /* Draw the same overlay on both panels */
+      const overlayHTML = buildOverlay();
+      srcOverlay.innerHTML = overlayHTML;
+      refOverlay.innerHTML = overlayHTML;
 
-      /* ── Redraw source overlay (dots + grid only, no CSS transform) ── */
-      function redrawSource() {
-        srcGridEl.innerHTML = buildGrid(dots.leftEye, dots.rightEye);
-        srcDotsEl.innerHTML = buildSrcDots();
-      }
-
-      /* ── Initialize dots at reference positions ── */
-      function initDots() {
-        dots.leftEye = [...refLandmarks.leftEye];
-        dots.rightEye = [...refLandmarks.rightEye];
-        dots.nose = [...refLandmarks.nose];
-        dots.leftLip = [...refLandmarks.leftLip];
-        dots.rightLip = [...refLandmarks.rightLip];
-      }
-
-      /* ══════════════════════════════════════════════════
-     SLIDERS — apply CSS transform to the entire
-     source wrapper (image + overlay move together)
-     ══════════════════════════════════════════════════ */
+      /* ── Sliders — transform only the source image ── */
       function applySliderTransform() {
         const reflectX = Number(sliders.reflection.value);
         const rotate = Number(sliders.rotation.value);
@@ -584,7 +476,7 @@
         const tx = Number(sliders.translateX.value);
         const ty = Number(sliders.translateY.value);
 
-        sourceWrapper.style.transform = `translate(${tx}px, ${ty}px) rotate(${rotate}deg) scale(${scale * reflectX}, ${scale})`;
+        sourceImg.style.transform = `translate(${tx}px, ${ty}px) rotate(${rotate}deg) scale(${scale * reflectX}, ${scale})`;
 
         displays.reflection.textContent = reflectX === -1 ? 'Flipped' : 'None';
         displays.rotation.textContent = `${rotate}°`;
@@ -597,71 +489,14 @@
         s.addEventListener('input', applySliderTransform),
       );
 
-      /* ══════════════════════════════════════════════════
-     DOTS — draggable landmarks, grid follows eyes
-     (completely independent of sliders)
-     ══════════════════════════════════════════════════ */
-      function startDrag(evt) {
-        const hit = evt.target.closest('.dot-hit');
-        if (!hit) return;
-        evt.preventDefault();
-        dragging = hit.dataset.dot;
-        document.body.style.cursor = 'grabbing';
-      }
-
-      function moveDrag(evt) {
-        if (!dragging) return;
-        evt.preventDefault();
-        const pt = svgPoint(evt);
-        const x = Math.max(0, Math.min(100, pt.x));
-        const y = Math.max(0, Math.min(100, pt.y));
-        dots[dragging] = [x, y];
-
-        if (dragging === 'leftEye' || dragging === 'rightEye') {
-          const refL = refLandmarks.leftEye,
-            refR = refLandmarks.rightEye;
-          const curL = dots.leftEye,
-            curR = dots.rightEye;
-          dots.nose = transformPoint(refLandmarks.nose, refL, refR, curL, curR);
-          dots.leftLip = transformPoint(
-            refLandmarks.leftLip,
-            refL,
-            refR,
-            curL,
-            curR,
-          );
-          dots.rightLip = transformPoint(
-            refLandmarks.rightLip,
-            refL,
-            refR,
-            curL,
-            curR,
-          );
-        }
-
-        redrawSource();
-      }
-
-      function endDrag() {
-        if (!dragging) return;
-        dragging = null;
-        document.body.style.cursor = '';
-      }
-
-      srcSvg.addEventListener('mousedown', startDrag);
-      srcSvg.addEventListener('touchstart', startDrag, { passive: false });
-      window.addEventListener('mousemove', moveDrag);
-      window.addEventListener('touchmove', moveDrag, { passive: false });
-      window.addEventListener('mouseup', endDrag);
-      window.addEventListener('touchend', endDrag);
-
       /* ── Image selection ── */
       buttons.forEach((btn) => {
         btn.addEventListener('click', () => {
           buttons.forEach((b) => b.classList.remove('active'));
           btn.classList.add('active');
           sourceImg.src = btn.dataset.src;
-          sourceWrapper.style.display = 'flex';
+          sourceImg.style.display = 'block';
+          srcOverlay.style.display = '';
           placeholder.style.display = 'none';
           resetAll();
         });
@@ -675,8 +510,6 @@
         sliders.translateX.value = 0;
         sliders.translateY.value = 0;
         applySliderTransform();
-        initDots();
-        redrawSource();
       }
 
       document.getElementById('reset-btn').addEventListener('click', resetAll);
